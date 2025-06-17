@@ -1,0 +1,266 @@
+MaterialApp/
+├── Entities/                     // Модели из БД
+│   ├── Material.cs
+│   ├── MaterialType.cs
+│   ├── Product.cs
+│   └── MaterialProduct.cs
+├── Models/                       // Доменные модели
+│   └── MaterialModel.cs
+├── ViewModels/
+│   ├── MainWindowViewModel.cs
+│   └── MaterialsViewModel.cs
+├── Views/
+│   ├── MainWindow.axaml
+│   └── MaterialsView.axaml
+├── MaterialContext.cs            // Контекст EF Core
+└── App.axaml / Program.cs        // Точка входа Avalonia
+
+dotnet new install Avalonia.Templates
+
+
+dotnet add package Microsoft.EntityFrameworkCore.Tools --version 9.0.3
+dotnet add package Microsoft.EntityFrameworkCore.Design --version 9.0.3
+dotnet add package FirebirdSql.EntityFrameworkCore.Firebird --version 12.0.0
+dotnet add package Avalonia.ReactiveUI --version 11.2.6
+
+dotnet new tool-manifest
+dotnet tool install dotnet-ef --version 9.0.3
+
+
+
+dotnet tool restore
+
+dotnet tool run dotnet-ef dbcontext scaffold "DataSource=localhost;Port=3050;Database=/db/demo.fdb;Username=sysdba;Password=password" FirebirdSql.EntityFrameworkCore.Firebird -o Entities -f
+
+
+Создание доменной модели (MaterialModel.cs)
+
+using System.Linq;
+using System.Collections.Generic;
+
+namespace MaterialApp.Models
+{
+    public class MaterialModel
+    {
+        public Entities.Material _material { get; set; }
+
+        public MaterialModel(Entities.Material material)
+        {
+            _material = material;
+        }
+
+        public string Name => _material.MaterialName;
+        public string TypeName => _material.MaterialType?.MaterialTypeName ?? "Неизвестно";
+        public decimal UnitPrice => _material.UnitPrice;
+        public decimal QuantityInStock => _material.QuantityInStock;
+        public decimal MinQuantity => _material.MinQuantity;
+        public decimal PackagingQuantity => _material.PackagingQuantity;
+        public string UnitOfMeasurement => _material.UnitOfMeasurement;
+        public decimal RequiredQuantity => CalculateRequiredQuantity();
+
+        private decimal CalculateRequiredQuantity()
+        {
+            return _material.MaterialProducts?.Sum(mp => mp.RequiredQuantity) ?? 0;
+        }
+    }
+}
+
+
+
+ViewModel главного окна (MainWindowViewModel.cs)
+
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.ObjectModel;
+using MaterialApp.ViewModels;
+
+namespace MaterialApp.ViewModels
+{
+    public partial class MainWindowViewModel : ObservableObject
+    {
+        [ObservableProperty]
+        private Control? content;
+
+        public void ShowContent(Control control) => Content = control;
+
+        public void ShowMaterialsList()
+        {
+            Content = new MaterialsView
+            {
+                DataContext = new MaterialsViewModel(new FdbMaterialsFdbContext(), this)
+            };
+        }
+
+        public MainWindowViewModel()
+        {
+            ShowMaterialsList();
+        }
+    }
+}
+
+
+
+
+ViewModel материалов (MaterialsViewModel.cs)
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.ObjectModel;
+using MaterialApp.Models;
+
+namespace MaterialApp.ViewModels
+{
+    public partial class MaterialsViewModel : ObservableObject
+    {
+        private readonly FdbMaterialsFdbContext _context;
+        internal readonly MainWindowViewModel _mainViewModel;
+
+        [ObservableProperty]
+        private ObservableCollection<MaterialModel> _materials = new();
+
+        [ObservableProperty]
+        private MaterialModel? _selectedMaterial;
+
+        public MaterialsViewModel(FdbMaterialsFdbContext context, MainWindowViewModel mainViewModel)
+        {
+            _context = context;
+            _mainViewModel = mainViewModel;
+            LoadMaterials();
+        }
+
+        private void LoadMaterials()
+        {
+            var entities = _context.Materials
+                .Include(m => m.MaterialType)
+                .Include(m => m.MaterialProducts)
+                .ToList();
+
+            Materials = new ObservableCollection<MaterialModel>(
+                entities.Select(e => new MaterialModel(e))
+            );
+        }
+
+        [RelayCommand]
+        private void AddMaterial()
+        {
+            // Логика добавления нового материала
+        }
+
+        [RelayCommand]
+        private void EditMaterial()
+        {
+            // Логика редактирования
+        }
+    }
+}
+
+
+Окно материалов (MaterialsView.axaml)
+<UserControl xmlns="https://github.com/avaloniaui" 
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:MaterialApp.ViewModels"
+             mc:Ignorable="d"
+             d:DesignWidth="800"
+             d:DesignHeight="450"
+             x:Class="MaterialApp.Views.MaterialsView"
+             x:DataType="vm:MaterialsViewModel">
+
+    <Grid Margin="20">
+        <StackPanel Spacing="10">
+            <Image Source="/Assets/logo.png" Width="100" Height="50"/>
+            <TextBlock Text="Склад материалов" FontSize="24" FontWeight="Bold"/>
+
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Content="Добавить материал" Command="{Binding AddMaterialCommand}"/>
+                <Button Content="Редактировать" Command="{Binding EditMaterialCommand}"/>
+            </StackPanel>
+
+            <ListBox ItemsSource="{Binding Materials}" SelectedItem="{Binding SelectedMaterial}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Vertical" Margin="5">
+                            <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock Text="Тип: {Binding TypeName}"/>
+                            <TextBlock Text="Количество на складе: {Binding QuantityInStock:F2}"/>
+                            <TextBlock Text="Минимальное количество: {Binding MinQuantity:F2}"/>
+                            <TextBlock Text="Требуемое количество: {Binding RequiredQuantity:F2}"/>
+                            <TextBlock Text="Цена за единицу: {Binding UnitPrice:C}"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </StackPanel>
+    </Grid>
+</UserControl>
+
+
+Главная форма (MainWindow.axaml)
+<Window xmlns="https://github.com/avaloniaui" 
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:MaterialApp.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="MaterialApp.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/icon.ico"
+        Title="Склад материалов ООО «ОфисМебель»">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <ContentControl Content="{Binding Content}"/>
+</Window>
+
+
+Точка входа (App.axaml.cs)
+using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
+
+namespace MaterialApp.Views
+{
+    public partial class MainWindow : Window
+    {
+        public MainWindow()
+        {
+            InitializeComponent();
+        }
+
+        private void InitializeComponent()
+        {
+            AvaloniaXamlLoader.Load(this);
+        }
+    }
+}
+
+
+ Запуск приложения
+В Program.cs или App.xaml.cs:
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
+using Microsoft.EntityFrameworkCore;
+
+public class App : Application
+{
+    public override void OnFrameworkInitializationCompleted()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<FdbMaterialsFdbContext>();
+            optionsBuilder.UseFirebird("DataSource=localhost;Port=3050;Database=/db/materials.fdb;Username=sysdba;Password=password");
+
+            var context = new FdbMaterialsFdbContext(optionsBuilder.Options);
+
+            desktop.MainWindow = new MainWindow
+            {
+                DataContext = new MainWindowViewModel()
+            };
+        }
+
+        base.OnFrameworkInitializationCompleted();
+    }
+}
